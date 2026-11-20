@@ -1,5 +1,7 @@
 import { sqliteTable, text, integer} from 'drizzle-orm/sqlite-core';
 export const setting = sqliteTable('setting', {
+	mailLimit: integer('mail_limit').default(0).notNull(),
+	mailDeleteCount: integer('mail_delete_count').default(100).notNull(),
 	register: integer('register').default(0).notNull(),
 	receive: integer('receive').default(0).notNull(),
 	title: text('title').default('').notNull(),

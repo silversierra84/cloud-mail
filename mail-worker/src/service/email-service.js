@@ -1,7 +1,9 @@
 import orm from '../entity/orm';
 import email from '../entity/email';
+import { att } from '../entity/att';
+import setting from '../entity/setting';
 import { attConst, emailConst, isDel, settingConst } from '../const/entity-const';
-import { and, desc, eq, gt, inArray, lt, count, asc, sql, ne, or, like, lte, gte } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lt, count, asc, sql, ne, or, lte, gte, notExists } from 'drizzle-orm';
 import { star } from '../entity/star';
 import settingService from './setting-service';
 import accountService from './account-service';
@@ -19,6 +21,54 @@ import kvConst from '../const/kv-const';
 import { t } from '../i18n/i18n'
 import r2Service from './r2-service';
 import domainUtils from '../utils/domain-uitls';
+
+const isStarred = sql`EXISTS (SELECT 1 FROM ${star} WHERE ${star.emailId} = ${email.emailId})`;
+const isUnstarred = sql`NOT ${isStarred}`;
+const isSaved = ne(email.status, emailConst.status.SAVING);
+const deleteBatchSize = 80;
+
+function advancedEmailFilters({ sendName, sendEmail, toEmail, subject, startTime, endTime, matchType }) {
+	const conditions = [];
+	const left = matchType === 'include' ? '%' : '';
+	const right = matchType === 'include' || matchType === 'left' ? '%' : '';
+	for (const [column, value] of [
+		[email.name, sendName], [email.sendEmail, sendEmail], [email.toEmail, toEmail], [email.subject, subject]
+	]) {
+		if (value) {
+			const literal = value.replace(/[!%_]/g, character => '!' + character);
+			conditions.push(sql`${column} LIKE ${left + literal + right} ESCAPE '!'`);
+		}
+	}
+	if (startTime) conditions.push(gte(email.createTime, startTime));
+	if (endTime) conditions.push(lt(email.createTime, endTime));
+	return conditions;
+}
+
+function allEmailFilters(params) {
+	const { name, subject, userEmail, accountEmail, type, starred } = params;
+	const conditions = advancedEmailFilters({ ...params, subject: params.filterSubject });
+	if (subject) conditions.push(sql`${email.subject} COLLATE NOCASE LIKE ${subject + '%'}`);
+
+	if (type === 'send') conditions.push(eq(email.type, emailConst.type.SEND));
+	if (type === 'receive') conditions.push(eq(email.type, emailConst.type.RECEIVE));
+	if (type === 'delete') conditions.push(eq(email.isDel, isDel.DELETE));
+	if (type === 'noone') conditions.push(eq(email.status, emailConst.status.NOONE));
+
+	if (userEmail) {
+		conditions.push(sql`${user.email} COLLATE NOCASE LIKE ${userEmail + '%'}`);
+	}
+	if (accountEmail) {
+		conditions.push(or(
+			sql`${email.toEmail} COLLATE NOCASE LIKE ${accountEmail + '%'}`,
+			sql`${email.sendEmail} COLLATE NOCASE LIKE ${accountEmail + '%'}`
+		));
+	}
+	if (name) conditions.push(sql`${email.name} COLLATE NOCASE LIKE ${name + '%'}`);
+	if (starred === 'yes') conditions.push(isStarred);
+	if (starred === 'no') conditions.push(isUnstarred);
+	conditions.push(isSaved);
+	return conditions;
+}
 
 const emailService = {
 
@@ -498,7 +548,7 @@ const emailService = {
 
 	async allList(c, params) {
 
-		let { emailId, size, name, subject, accountEmail, userEmail, type, timeSort } = params;
+		let { emailId, size, timeSort } = params;
 
 		size = Number(size);
 
@@ -519,48 +569,7 @@ const emailService = {
 
 		}
 
-		const conditions = [];
-
-
-		if (type === 'send') {
-			conditions.push(eq(email.type, emailConst.type.SEND));
-		}
-
-		if (type === 'receive') {
-			conditions.push(eq(email.type, emailConst.type.RECEIVE));
-		}
-
-		if (type === 'delete') {
-			conditions.push(eq(email.isDel, isDel.DELETE));
-		}
-
-		if (type === 'noone') {
-			conditions.push(eq(email.status, emailConst.status.NOONE));
-		}
-
-		if (userEmail) {
-			conditions.push(sql`${user.email} COLLATE NOCASE LIKE ${userEmail + '%'}`);
-		}
-
-		if (accountEmail) {
-			conditions.push(
-				or(
-					sql`${email.toEmail} COLLATE NOCASE LIKE ${accountEmail + '%'}`,
-					sql`${email.sendEmail} COLLATE NOCASE LIKE ${accountEmail + '%'}`,
-				)
-			)
-		}
-
-		if (name) {
-			conditions.push(sql`${email.name} COLLATE NOCASE LIKE ${name + '%'}`);
-		}
-
-		if (subject) {
-			conditions.push(sql`${email.subject} COLLATE NOCASE LIKE ${subject + '%'}`);
-		}
-
-		conditions.push(ne(email.status, emailConst.status.SAVING));
-
+		const conditions = allEmailFilters(params);
 		const countConditions = [...conditions];
 
 		if (timeSort) {
@@ -569,7 +578,7 @@ const emailService = {
 			conditions.push(lt(email.emailId, emailId));
 		}
 
-		const query = orm(c).select({ ...email, userEmail: user.email })
+		const query = orm(c).select({ ...email, userEmail: user.email, isStar: isStarred.mapWith(Number) })
 			.from(email)
 			.leftJoin(user, eq(email.userId, user.userId))
 			.where(and(...conditions));
@@ -618,49 +627,84 @@ const emailService = {
 	},
 
 	async batchDelete(c, params) {
-		let { sendName, sendEmail, toEmail, subject, startTime, endTime, type  } = params
-
-		let right = type === 'left' || type === 'include'
-		let left = type === 'include'
-
-		const conditions = []
-
-		if (sendName) {
-			conditions.push(like(email.name,`${left ? '%' : ''}${sendName}${right ? '%' : ''}`))
+		if (params.scope === 'filtered') {
+			const conditions = allEmailFilters(params);
+			// Require at least one filter in addition to the saved-email condition.
+			if (conditions.length === 1 || params.starred === 'yes') return { deleted: 0 };
+			return this.deleteFilteredBatch(c, conditions, params.beforeId);
 		}
 
-		if (subject) {
-			conditions.push(like(email.subject,`${left ? '%' : ''}${subject}${right ? '%' : ''}`))
+		// Keep the original cleanup endpoint available to older clients.
+		const conditions = advancedEmailFilters({ ...params, matchType: params.type });
+		if (!conditions.length) return { deleted: 0 };
+
+		let beforeId;
+		let deleted = 0;
+		do {
+			const batch = await this.deleteFilteredBatch(c, conditions, beforeId);
+			deleted += batch.deleted;
+			beforeId = batch.nextBeforeId;
+		} while (beforeId);
+		return { deleted };
+	},
+
+	async deleteFilteredBatch(c, conditions, beforeId) {
+		if (beforeId !== undefined) {
+			const cursor = Number(beforeId);
+			if (!Number.isSafeInteger(cursor) || cursor < 1) return { deleted: 0 };
+			conditions.push(lt(email.emailId, cursor));
 		}
+		const rows = await orm(c).select({ emailId: email.emailId })
+			.from(email)
+			.leftJoin(user, eq(email.userId, user.userId))
+			.where(and(...conditions, isSaved, isUnstarred))
+			.orderBy(desc(email.emailId))
+			.limit(deleteBatchSize)
+			.all();
 
-		if (sendEmail) {
-			conditions.push(like(email.sendEmail,`${left ? '%' : ''}${sendEmail}${right ? '%' : ''}`))
+		return {
+			deleted: await this.deleteUnstarred(c, rows.map(row => row.emailId)),
+			nextBeforeId: rows.length === deleteBatchSize ? rows.at(-1).emailId : null
+		};
+	},
+
+	async deleteUnstarred(c, emailIds) {
+		if (!emailIds.length) return 0;
+		const db = orm(c);
+		const [deleted, removedAttachments] = await db.batch([
+			db.delete(email).where(and(inArray(email.emailId, emailIds), isSaved, isUnstarred))
+				.returning({ emailId: email.emailId }),
+			db.delete(att).where(and(inArray(att.emailId, emailIds), notExists(
+				db.select({ id: email.emailId }).from(email).where(eq(email.emailId, att.emailId))
+			))).returning({ key: att.key })
+		]);
+
+		try {
+			await attService.removeUnusedKeys(c, removedAttachments.map(row => row.key));
+		} catch (error) {
+			console.error('Failed to remove unreferenced attachment objects', error);
 		}
+		return deleted.length;
+	},
 
-		if (toEmail) {
-			conditions.push(like(email.toEmail,`${left ? '%' : ''}${toEmail}${right ? '%' : ''}`))
+	async trimMailbox(c) {
+		const retention = await orm(c).select({
+			limit: setting.mailLimit,
+			deleteCount: setting.mailDeleteCount
+		}).from(setting).get();
+		if (!retention?.limit) return;
+
+		const { total } = await orm(c).select({ total: count() }).from(email).where(isSaved).get();
+		if (total <= retention.limit) return;
+
+		const rows = await orm(c).select({ emailId: email.emailId })
+			.from(email).where(and(isSaved, isUnstarred))
+			.orderBy(desc(email.createTime), desc(email.emailId))
+			.limit(retention.deleteCount).all();
+
+		for (let index = 0; index < rows.length; index += deleteBatchSize) {
+			await this.deleteUnstarred(c, rows.slice(index, index + deleteBatchSize).map(row => row.emailId));
 		}
-
-		if (startTime && endTime) {
-			conditions.push(gte(email.createTime,`${startTime}`))
-			conditions.push(lte(email.createTime,`${endTime}`))
-		}
-
-		if (conditions.length === 0) {
-			return;
-		}
-
-		const emailIdsRow = await orm(c).select({emailId: email.emailId}).from(email).where(conditions.length > 1 ? and(...conditions) : conditions[0]).all();
-
-		const emailIds = emailIdsRow.map(row => row.emailId);
-
-		if (emailIds.length === 0){
-			return;
-		}
-
-		await attService.removeByEmailIds(c, emailIds);
-
-		await orm(c).delete(email).where(conditions.length > 1 ? and(...conditions) : conditions[0]).run();
 	},
 
 	async physicsDeleteByAccountId(c, accountId) {

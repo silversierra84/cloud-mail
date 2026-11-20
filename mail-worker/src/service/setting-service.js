@@ -90,6 +90,15 @@ const settingService = {
 	},
 
 	async set(c, params) {
+		for (const [key, min, max] of [
+			['mailLimit', 0, Number.MAX_SAFE_INTEGER],
+			['mailDeleteCount', 1, 1000]
+		]) {
+			if (Object.hasOwn(params, key) &&
+				(!Number.isSafeInteger(params[key]) || params[key] < min || params[key] > max)) {
+				throw new BizError(t('invalidMailRetention'));
+			}
+		}
 		const settingData = await this.query(c);
 		let resendTokens = { ...settingData.resendTokens, ...params.resendTokens };
 		Object.keys(resendTokens).forEach(domain => {

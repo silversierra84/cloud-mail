@@ -1,4 +1,7 @@
 const en = {
+	randomAddressCapacity: 'Too few available addresses. Increase the length or reduce the quantity.',
+	invalidRandomAddressOptions: 'Check the batch quantity, address format, and length.',
+	invalidMailRetention: 'The mail limit must be a nonnegative integer, and the deletion count must be between 1 and 1000.',
 	IncorrectPwd: 'Incorrect password',
 	addAccountDisabled: 'Add account feature is disabled',
 	regDisabled: 'Sign up is disabled',

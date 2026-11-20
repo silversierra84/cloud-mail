@@ -18,7 +18,11 @@ export default {
 		return env.assets.fetch(req);
 	},
 	email: email,
-	async scheduled(c, env, ctx) {
+	async scheduled(event, env) {
+		if (event.cron === '*/5 * * * *') {
+			await emailService.trimMailbox({ env });
+			return;
+		}
 		await verifyRecordService.clearRecord({env})
 		await userService.resetDaySendCount({ env })
 		await emailService.completeReceiveAll({ env })

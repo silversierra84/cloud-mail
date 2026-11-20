@@ -22,8 +22,27 @@ const init = {
 		await this.v1_6DB(c);
 		await this.v1_7DB(c);
 		await this.v2DB(c);
+		await this.mailRetentionDB(c);
 		await settingService.refresh(c);
 		return c.text(t('initSuccess'));
+	},
+
+	async mailRetentionDB(c) {
+		const { results } = await c.env.db.prepare('PRAGMA table_info(setting)').all();
+		const columns = new Set(results.map(row => row.name));
+		const statements = [
+			'CREATE INDEX IF NOT EXISTS idx_star_email_id ON star(email_id)',
+			'CREATE INDEX IF NOT EXISTS idx_email_create_time_id ON email(create_time DESC, email_id DESC)',
+			'CREATE INDEX IF NOT EXISTS idx_attachments_email_id ON attachments(email_id)',
+			'CREATE INDEX IF NOT EXISTS idx_attachments_key ON attachments(key)'
+		];
+		if (!columns.has('mail_limit')) {
+			statements.push('ALTER TABLE setting ADD COLUMN mail_limit INTEGER NOT NULL DEFAULT 0');
+		}
+		if (!columns.has('mail_delete_count')) {
+			statements.push('ALTER TABLE setting ADD COLUMN mail_delete_count INTEGER NOT NULL DEFAULT 100');
+		}
+		await c.env.db.batch(statements.map(statement => c.env.db.prepare(statement)));
 	},
 
 	async v2DB(c) {

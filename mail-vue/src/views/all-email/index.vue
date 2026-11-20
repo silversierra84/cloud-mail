@@ -20,6 +20,7 @@
             v-model="searchValue"
             :placeholder="$t('searchByContent')"
             class="search-input"
+            @keyup.enter="search"
         >
           <template #prefix>
             <div @click.stop="openSelect">
@@ -46,40 +47,58 @@
           <el-option key="3" :label="$t('received')" value="receive"/>
           <el-option key="2" :label="$t('sent')" value="send"/>
           <el-option key="4" :label="$t('selectDeleted')" value="delete"/>
-          <el-option key="4" :label="$t('noRecipientTitle')" value="noone"/>
+          <el-option key="5" :label="$t('noRecipientTitle')" value="noone"/>
         </el-select>
         <Icon class="icon" icon="iconoir:search" @click="search" width="20" height="20"/>
         <Icon class="icon" @click="changeTimeSort" icon="material-symbols-light:timer-arrow-down-outline"
               v-if="params.timeSort === 0" width="28" height="28"/>
         <Icon class="icon" @click="changeTimeSort" icon="material-symbols-light:timer-arrow-up-outline" v-else
               width="28" height="28"/>
-        <Icon class="icon clear" icon="fluent:broom-sparkle-16-regular" width="22" height="22" @click="openBathDelete"/>
+        <el-tooltip :content="t('filterMail')">
+          <el-button :type="hasAdvancedFilters ? 'primary' : 'default'" size="small"
+                     :aria-label="t('filterMail')" @click="openFilters">
+            <Icon icon="mdi:filter-variant" width="18" height="18"/>
+          </el-button>
+        </el-tooltip>
+        <span v-if="canDeleteFiltered" v-perm="'all-email:delete'">
+          <el-tooltip :content="t('deleteFilteredMail')">
+            <el-button type="danger" plain size="small" :aria-label="t('deleteFilteredMail')"
+                       :loading="clearLoading" @click="deleteFiltered">
+              <Icon icon="fluent:broom-sparkle-16-regular" width="18" height="18"/>
+            </el-button>
+          </el-tooltip>
+        </span>
       </template>
     </emailScroll>
-    <el-dialog v-model="showBathDelete" :title="$t('clearEmail')" width="335"
-               @closed="closedClear">
+    <el-dialog v-model="showFilters" :title="t('filterMail')" width="min(360px, 92vw)">
       <div class="clear-email">
-        <el-input v-model="clearParams.sendName" :placeholder="$t('sender')"/>
-        <el-input v-model="clearParams.subject" :placeholder="$t('subject')"/>
-        <el-input v-model="clearParams.sendEmail" :placeholder="$t('sendEmailAddress')"/>
-        <el-input v-model="clearParams.toEmail" :placeholder="$t('toEmail')"/>
-        <el-date-picker popper-class="my-date-picker"
-                        v-model="clearTime"
-                        type="daterange"
-                        :teleported="false"
-                        unlink-panels
-                        :range-separator="t('to')"
-                        size="default"
-        />
-        <div class="clear-button">
-          <el-select v-model="clearParams.type" style="width: 200px">
-            <el-option key="eq" :label="t('equal')" value="eq"/>
-            <el-option key="left" :label="t('leading')" value="left"/>
-            <el-option key="include" :label="t('include')" value="include"/>
+        <el-input v-model.trim="filterDraft.sendName" :placeholder="t('sender')" clearable/>
+        <el-input v-model.trim="filterDraft.filterSubject" :placeholder="t('subject')" clearable/>
+        <el-input v-model.trim="filterDraft.sendEmail" :placeholder="t('sendEmailAddress')" clearable/>
+        <el-input v-model.trim="filterDraft.toEmail" :placeholder="t('toEmail')" clearable/>
+        <el-date-picker popper-class="my-date-picker" v-model="filterDraft.dateRange"
+                        type="daterange" :teleported="false" unlink-panels
+                        :range-separator="t('to')" :start-placeholder="t('mailFilterDateStart')"
+                        :end-placeholder="t('mailFilterDateEnd')"/>
+        <el-form-item :label="t('mailFilterStar')">
+          <el-select v-model="filterDraft.starred">
+            <el-option :label="t('all')" value="all"/>
+            <el-option :label="t('starred')" value="yes"/>
+            <el-option :label="t('mailFilterUnstarred')" value="no"/>
           </el-select>
-          <el-button :loading="clearLoading" type="primary" @click="batchDelete">{{ t('clear') }}</el-button>
-        </div>
+        </el-form-item>
+        <el-form-item :label="t('mailFilterMatch')">
+          <el-select v-model="filterDraft.matchType">
+            <el-option :label="t('equal')" value="eq"/>
+            <el-option :label="t('leading')" value="left"/>
+            <el-option :label="t('include')" value="include"/>
+          </el-select>
+        </el-form-item>
       </div>
+      <template #footer>
+        <el-button @click="resetFilters">{{ t('resetMailFilters') }}</el-button>
+        <el-button type="primary" @click="applyFilters">{{ t('applyMailFilters') }}</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -98,6 +117,7 @@ import {Icon} from "@iconify/vue";
 import router from "@/router/index.js";
 import {useI18n} from 'vue-i18n';
 import {toUtc} from "@/utils/day.js";
+import dayjs from "dayjs";
 
 defineOptions({
   name: 'all-email'
@@ -105,11 +125,10 @@ defineOptions({
 
 const {t} = useI18n();
 const emailStore = useEmailStore();
-const clearTime = ref('')
 const sysEmailScroll = ref({})
 const searchValue = ref('')
 const mySelect = ref()
-const showBathDelete = ref(false)
+const showFilters = ref(false)
 const clearLoading = ref(false)
 
 const openSelect = () => {
@@ -126,30 +145,30 @@ const params = reactive({
   searchType: 'name'
 })
 
-const clearParams = reactive({
-  subject: '',
+const defaultFilters = {
+  filterSubject: '',
   sendEmail: '',
   sendName: '',
-  startTime: '',
   toEmail: '',
-  endTime: '',
-  type: 'eq',
-})
-
-function resetClearParams() {
-  clearParams.subject = ''
-  clearParams.sendEmail = ''
-  clearParams.sendName = ''
-  clearParams.startTime = ''
-  clearParams.toEmail = ''
-  clearParams.endTime = ''
+  dateRange: null,
+  starred: 'all',
+  matchType: 'eq',
 }
+const filters = ref({...defaultFilters})
+const filterDraft = reactive({...defaultFilters})
+const hasAdvancedFilters = computed(() => {
+  const {filterSubject, sendEmail, sendName, toEmail, dateRange, starred} = filters.value
+  return Boolean(filterSubject || sendEmail || sendName || toEmail || dateRange || starred !== 'all')
+})
+const canDeleteFiltered = computed(() => filters.value.starred !== 'yes' &&
+    (hasAdvancedFilters.value || params.userEmail || params.accountEmail || params.name || params.subject ||
+        ['send', 'delete', 'noone'].includes(params.type)))
 
-function closedClear() {
-  resetClearParams()
-  clearParams.type = 'eq'
-  clearParams.endTime = ''
-  clearTime.value = null
+function currentFilters() {
+  const {dateRange, ...advanced} = filters.value
+  const startTime = dateRange ? toUtc(dateRange[0]).format('YYYY-MM-DD HH:mm:ss') : ''
+  const endTime = dateRange ? toUtc(dayjs(dateRange[1]).add(1, 'day')).format('YYYY-MM-DD HH:mm:ss') : ''
+  return {...params, ...advanced, startTime, endTime}
 }
 
 const selectTitle = computed(() => {
@@ -164,7 +183,6 @@ if (paramsStar) {
   const locaParams = JSON.parse(paramsStar)
   params.type = locaParams.type
   params.timeSort = locaParams.timeSort
-  params.status = locaParams.status
   params.searchType = locaParams.searchType
 }
 
@@ -174,48 +192,53 @@ watch(() => params, () => {
   deep: true
 })
 
-function openBathDelete() {
-  showBathDelete.value = true
+function openFilters() {
+  Object.assign(filterDraft, filters.value)
+  showFilters.value = true
 }
 
-function batchDelete() {
+function resetFilters() {
+  Object.assign(filterDraft, defaultFilters)
+}
 
-  if (clearTime.value) {
-    clearParams.startTime = toUtc(clearTime.value[0]).format("YYYY-MM-DD HH:mm:ss")
-    clearParams.endTime = toUtc(clearTime.value[1]).add(1, 'day').format("YYYY-MM-DD HH:mm:ss")
-  }
+function applyFilters() {
+  filters.value = {...filterDraft}
+  showFilters.value = false
+  search()
+}
 
-  if (!clearParams.sendEmail && !clearParams.sendName && !clearParams.subject && !clearParams.toEmail && !clearTime.value) {
-    showBathDelete.value = false
-    return
-  }
-
-  ElMessageBox.confirm(
-      t('delAllEmailConfirm'),
-      {
-        confirmButtonText: t('confirm'),
-        cancelButtonText: t('cancel'),
-        type: 'warning',
-      }
-  ).then(() => {
-    clearLoading.value = true
-
-    allEmailBatchDelete(clearParams).then(() => {
-      ElMessage({
-        message: t('clearSuccess'),
-        type: "success",
-        plain: true
-      })
-      resetClearParams()
-      sysEmailScroll.value.refreshList();
-    }).finally(() => {
-      clearLoading.value = false
+async function deleteFiltered() {
+  if (!canDeleteFiltered.value || clearLoading.value) return
+  const criteria = {...currentFilters(), scope: 'filtered'}
+  clearLoading.value = true
+  let confirmed = false
+  let total = 0
+  try {
+    await ElMessageBox.confirm(t('deleteFilteredMailConfirm'), {
+      confirmButtonText: t('confirm'),
+      cancelButtonText: t('cancel'),
+      type: 'warning',
     })
-  })
+    confirmed = true
+
+    let beforeId
+    do {
+      const batch = await allEmailBatchDelete({...criteria, beforeId})
+      total += batch.deleted
+      beforeId = batch.nextBeforeId
+    } while (beforeId)
+    ElMessage.success(t('deletedFilteredMailCount', {count: total}))
+  } catch {
+    if (total) ElMessage.warning(t('partialFilteredMailCount', {count: total}))
+  } finally {
+    clearLoading.value = false
+    if (confirmed) sysEmailScroll.value?.refreshList()
+  }
 }
 
 function refreshBefore() {
   searchValue.value = null
+  filters.value = {...defaultFilters}
   params.timeSort = 0
   params.type = 'receive'
   params.userEmail = null
@@ -233,19 +256,19 @@ function search() {
   params.subject = null
 
   if (params.searchType === 'user') {
-    params.userEmail = searchValue.value
+    params.userEmail = searchValue.value?.trim()
   }
 
   if (params.searchType === 'account') {
-    params.accountEmail = searchValue.value
+    params.accountEmail = searchValue.value?.trim()
   }
 
   if (params.searchType === 'name') {
-    params.name = searchValue.value
+    params.name = searchValue.value?.trim()
   }
 
   if (params.searchType === 'subject') {
-    params.subject = searchValue.value
+    params.subject = searchValue.value?.trim()
   }
 
   sysEmailScroll.value.refreshList();
@@ -270,7 +293,7 @@ function jumpContent(email) {
 
 
 function getEmailList(emailId, size) {
-  return allEmailList({emailId, size, ...params})
+  return allEmailList({emailId, size, ...currentFilters()})
 }
 </script>
 <style>
@@ -353,16 +376,6 @@ function getEmailList(emailId, size) {
   display: flex;
   flex-direction: column;
   gap: 15px;
-}
-
-.clear-button {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-
-  .el-button {
-    width: 100%;
-  }
 }
 
 .status-select {

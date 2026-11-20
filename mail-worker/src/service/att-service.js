@@ -181,6 +181,19 @@ const attService = {
 
 	},
 
+	async removeUnusedKeys(c, keys) {
+		const uniqueKeys = [...new Set(keys)];
+		const unused = [];
+		for (let index = 0; index < uniqueKeys.length; index += 80) {
+			const batch = uniqueKeys.slice(index, index + 80);
+			const rows = await orm(c).selectDistinct({ key: att.key }).from(att)
+				.where(inArray(att.key, batch)).all();
+			const referenced = new Set(rows.map(row => row.key));
+			unused.push(...batch.filter(key => !referenced.has(key)));
+		}
+		await this.batchDelete(c, unused);
+	},
+
 	async batchDelete(c, keys) {
 		if (!keys.length) return;
 

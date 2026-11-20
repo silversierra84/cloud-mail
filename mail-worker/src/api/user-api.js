@@ -35,8 +35,12 @@ app.post('/user/add', async (c) => {
 });
 
 app.post('/user/batchAdd', async (c) => {
-	const { list } = await c.req.json();
-	await userService.insertBatch(c, list);
+	const params = await c.req.json();
+	if (Array.isArray(params.list)) {
+		await userService.insertBatch(c, params.list);
+	} else {
+		await userService.generateBatch(c, params);
+	}
 	return c.json(result.ok());
 });
 

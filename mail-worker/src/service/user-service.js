@@ -17,6 +17,8 @@ import constant from '../const/constant';
 import { t } from '../i18n/i18n'
 import reqUtils from '../utils/req-utils';
 import secretUtils from '../utils/secret-utils';
+import settingService from './setting-service';
+import { randomAddressCandidates } from '../utils/random-addresses';
 
 const userService = {
 
@@ -71,15 +73,50 @@ const userService = {
 		return userId;
 	},
 
+	async generateBatch(c, { quantity, randomMode, partLength, digitLength, suffix, password, type }) {
+		const setting = await settingService.query(c);
+		if (!setting.domainList.includes(suffix)) {
+			throw new BizError(t('notEmailDomain'));
+		}
+		if (typeof password !== 'string' || password.length < 6) {
+			throw new BizError(t('pwdMinLengthLimit'));
+		}
+		const candidates = randomAddressCandidates({ quantity, randomMode, partLength, digitLength });
+		const addresses = [];
+
+		while (addresses.length < quantity) {
+			const batch = [];
+			const batchSize = Math.min(Math.max(quantity - addresses.length, 32), 80);
+			for (let index = 0; index < batchSize; index++) {
+				const next = candidates.next();
+				if (next.done) break;
+				batch.push(next.value + suffix);
+			}
+			if (!batch.length) throw new BizError(t('randomAddressCapacity'));
+
+			const { results } = await c.env.db.prepare(`
+				WITH candidates(email) AS (VALUES ${batch.map(() => '(?)').join(', ')})
+				SELECT email FROM candidates
+				WHERE NOT EXISTS (SELECT 1 FROM account WHERE account.email COLLATE NOCASE = candidates.email)
+				  AND NOT EXISTS (SELECT 1 FROM user WHERE user.email COLLATE NOCASE = candidates.email)
+			`).bind(...batch).all();
+			addresses.push(...results.map(row => row.email));
+		}
+
+		await this.insertBatch(c, addresses.slice(0, quantity).map(email => ({ email, password, type })));
+	},
+
 	async insertBatch(c, usersData) {
 		const chunkSize = 5;
-		const allUserIds = [];
+		const db = orm(c);
+		const verifiedRoles = new Set();
+		const activeIp = reqUtils.getIp(c);
+		const { os, browser, device } = reqUtils.getUserAgent(c);
+		const activeTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
 
 		for (let i = 0; i < usersData.length; i += chunkSize) {
 			const chunk = usersData.slice(i, i + chunkSize);
 			const userInserts = [];
-			const accountInsertsForChunk = [];
-			const userEmailsInChunk = []; // To easily find user data by email later
 
 			for (const userData of chunk) {
 				const { email, password, type } = userData;
@@ -96,17 +133,14 @@ const userService = {
 					throw new BizError(t('isRegAccount'));
 				}
 
-				const role = await roleService.selectById(c, type);
-				if (!role) {
-					throw new BizError(t('roleNotExist'));
+				if (!verifiedRoles.has(type)) {
+					const role = await roleService.selectById(c, type);
+					if (!role) throw new BizError(t('roleNotExist'));
+					verifiedRoles.add(type);
 				}
 
 				const { salt, hash } = await saltHashUtils.hashPassword(password);
 				const secret = secretUtils.generateSecret();
-
-				const activeIp = reqUtils.getIp(c);
-				const { os, browser, device } = reqUtils.getUserAgent(c);
-				const activeTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
 
 				const userInsert = {
 					email,
@@ -124,30 +158,20 @@ const userService = {
 				};
 
 				userInserts.push(userInsert);
-				userEmailsInChunk.push(email);
 			}
 
-			// Perform batch insert for users in the current chunk
-			const insertedUsers = await orm(c).insert(user).values(userInserts).returning({ userId: user.userId, email: user.email }).all();
+			const insertUsers = db.insert(user).values(userInserts).toSQL();
+			const insertAccounts = c.env.db.prepare(`
+				WITH addresses(email, name) AS (VALUES ${userInserts.map(() => '(?, ?)').join(', ')})
+				INSERT INTO account (user_id, email, name)
+				SELECT user.user_id, user.email, addresses.name
+				FROM addresses JOIN user ON user.email COLLATE NOCASE = addresses.email
+			`).bind(...userInserts.flatMap(({ email }) => [email, emailUtils.getName(email)]));
 
-			for (const insertedUser of insertedUsers) {
-				allUserIds.push(insertedUser.userId);
-				const originalUserData = chunk.find(u => u.email === insertedUser.email);
-				accountInsertsForChunk.push({
-					userId: insertedUser.userId,
-					email: insertedUser.email,
-					name: emailUtils.getName(insertedUser.email),
-					type: originalUserData.type,
-				});
-			}
-
-			// Perform batch insert for accounts in the current chunk
-			await accountService.insertBatch(c, accountInsertsForChunk);
-		}
-
-		// Update user info for all newly created users
-		for (const userId of allUserIds) {
-			await userService.updateUserInfo(c, userId, true);
+			await c.env.db.batch([
+				c.env.db.prepare(insertUsers.sql).bind(...insertUsers.params),
+				insertAccounts,
+			]);
 		}
 	},
 

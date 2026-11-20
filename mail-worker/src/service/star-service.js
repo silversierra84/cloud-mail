@@ -1,6 +1,5 @@
 import orm from '../entity/orm';
 import { star } from '../entity/star';
-import emailService from './email-service';
 import BizError from '../error/biz-error';
 import { and, desc, eq, lt, sql, inArray } from 'drizzle-orm';
 import email from '../entity/email';
@@ -11,24 +10,17 @@ const starService = {
 
 	async add(c, params, userId) {
 		const { emailId } = params;
-		const email = await emailService.selectById(c, emailId);
-		if (!email) {
-			throw new BizError(t('starNotExistEmail'));
-		}
-		if (!email.userId === userId) {
-			throw new BizError(t('starNotExistEmail'));
-		}
-		const exist = await orm(c).select().from(star).where(
-			and(
-				eq(star.userId, userId),
-				eq(star.emailId, emailId)))
-			.get()
+		const db = orm(c);
+		const existing = await db.select({ id: email.emailId }).from(email)
+			.where(and(eq(email.emailId, emailId), eq(email.userId, userId))).get();
+		if (!existing) throw new BizError(t('starNotExistEmail'));
 
-		if (exist) {
-			return
-		}
-
-		await orm(c).insert(star).values({ userId, emailId }).run();
+		await c.env.db.prepare(`
+			INSERT INTO star (user_id, email_id)
+			SELECT user_id, email_id FROM email
+			WHERE email_id = ? AND user_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM star WHERE star.email_id = email.email_id AND star.user_id = email.user_id)
+		`).bind(emailId, userId).run();
 	},
 
 	async cancel(c, params, userId) {

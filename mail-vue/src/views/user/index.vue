@@ -260,7 +260,20 @@
         </div>
 
         <div v-else>
-          <el-input-number v-model="addForm.quantity" :min="1" :placeholder="$t('quantity')" style="width: 100%; margin-bottom: 15px;" />
+          <el-form-item :label="$t('randomAddressFormat')">
+            <el-select v-model="addForm.randomMode">
+              <el-option :label="$t('randomAddressMixed')" value="mixed"/>
+              <el-option :label="$t('randomAddressLettersDigits')" value="lettersDigits"/>
+              <el-option :label="$t('randomAddressDigits')" value="digits"/>
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="addForm.randomMode === 'lettersDigits'" :label="$t('randomAddressPartLength')">
+            <el-input-number v-model="addForm.partLength" :min="1" :max="32" :precision="0"/>
+          </el-form-item>
+          <el-form-item v-if="addForm.randomMode === 'digits'" :label="$t('randomAddressDigitLength')">
+            <el-input-number v-model="addForm.digitLength" :min="1" :max="64" :precision="0"/>
+          </el-form-item>
+          <el-input-number :aria-label="$t('quantity')" :precision="0" v-model="addForm.quantity" :min="1" :max="1000" :placeholder="$t('quantity')" style="width: 100%; margin-bottom: 15px;" />
           <div @click.stop="openSelect" class="el-input el-input--default el-input-group el-input-group--append">
             <div class="el-input__wrapper">
               <input class="el-input__inner" type="text" readonly :value="addForm.suffix.startsWith('@') ? addForm.suffix.substring(1) : addForm.suffix" style="cursor: pointer;">
@@ -407,29 +420,14 @@ const domainList = settingStore.domainList
 const addForm = reactive({
   emailPrefix: '',
   quantity: 1,
+  randomMode: 'mixed',
+  partLength: 4,
+  digitLength: 8,
   password: '',
   type: null,
   addMode: 'single', // 'single' or 'batch'
   suffix: '', // For single add
 })
-
-const quantityList = computed(() => {
-  const list = [];
-  for (let i = 1; i <= 1000; i++) {
-    list.push({ label: i.toString(), value: i });
-  }
-  return list;
-})
-
-function generateRandomPrefix() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const length = Math.floor(Math.random() * 7) + 5; // 5-11 characters
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
 
 const params = reactive({
   email: '',
@@ -635,6 +633,9 @@ const openSelect = () => {
 function resetAddForm() {
   addForm.emailPrefix = ''
   addForm.quantity = 1
+  addForm.randomMode = 'mixed'
+  addForm.partLength = 4
+  addForm.digitLength = 8
   addForm.type = null
   addForm.password = ''
   addForm.addMode = 'single'
@@ -643,18 +644,13 @@ function resetAddForm() {
 
 function openAdd() {
   showAdd.value = true
-  addForm.emailPrefix = addForm.addMode === 'batch' ? generateRandomPrefix() : '';
   addForm.suffix = domainList[0];
   addForm.quantity = 1;
 }
 
-watch(() => addForm.addMode, (val) => {
-  if (val === 'batch') {
-    addForm.emailPrefix = generateRandomPrefix();
-  } else {
-    addForm.emailPrefix = '';
-  }
-  addForm.suffix = domainList[0];
+watch(() => addForm.addMode, () => {
+  addForm.emailPrefix = ''
+  addForm.suffix = domainList[0]
 })
 
 async function submit() {
@@ -722,38 +718,6 @@ async function submit() {
     })
 
   } else {
-    // Batch user add logic (existing logic)
-    if (!addForm.emailPrefix && addForm.quantity === 1) {
-      ElMessage({
-        message: t('emptyEmailMsg'),
-        type: "error",
-        plain: true
-      })
-      return
-    }
-
-    const domain = addForm.suffix;
-    const usersToCreate = [];
-
-    for (let i = 0; i < addForm.quantity; i++) {
-      let email = '';
-      if (addForm.quantity === 1 && addForm.emailPrefix) {
-        email = addForm.emailPrefix + domain;
-      } else {
-        email = generateRandomPrefix() + domain;
-      }
-
-      if (!isEmail(email)) {
-        ElMessage({
-          message: t('notEmailMsg') + `: ${email}`,
-          type: "error",
-          plain: true
-        })
-        return;
-      }
-      usersToCreate.push({ email: email, password: addForm.password, type: addForm.type });
-    }
-
     if (!addForm.password) {
       ElMessage({
         message: t('emptyPwdMsg'),
@@ -782,7 +746,15 @@ async function submit() {
     }
 
     addLoading.value = true
-    userBatchAdd(usersToCreate).then(() => {
+    userBatchAdd({
+      quantity: addForm.quantity,
+      randomMode: addForm.randomMode,
+      partLength: addForm.partLength,
+      digitLength: addForm.digitLength,
+      suffix: addForm.suffix,
+      password: addForm.password,
+      type: addForm.type
+    }).then(() => {
       addLoading.value = false
       showAdd.value = false
       ElMessage({

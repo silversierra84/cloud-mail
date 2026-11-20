@@ -1,4 +1,7 @@
 const zh = {
+	randomAddressCapacity: '该格式下可用的邮箱地址不足，请增加长度或减少数量',
+	invalidRandomAddressOptions: '请检查批量添加的数量、地址格式和长度',
+	invalidMailRetention: '邮件上限须为非负整数，每次删除数量须为 1 到 1000 的整数',
 	IncorrectPwd: '密码输入错误',
 	addAccountDisabled: '添加邮箱功能已关闭',
 	regDisabled: '注册功能已关闭',

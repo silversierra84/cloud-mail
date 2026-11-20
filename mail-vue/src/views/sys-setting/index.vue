@@ -183,6 +183,16 @@
                 </div>
               </div>
               <div class="setting-item">
+                <div><span>{{ t('mailRetention') }}</span></div>
+                <div>
+                  <span>{{ setting.mailLimit || t('disabled') }}</span>
+                  <el-button v-perm="'setting:set'" class="opt-button" size="small" type="primary"
+                             :aria-label="t('mailRetention')" @click="openMailRetention">
+                    <Icon icon="fluent:settings-48-regular" width="16" height="16"/>
+                  </el-button>
+                </div>
+              </div>
+              <div class="setting-item">
                 <div><span>{{ $t('resendToken') }}</span></div>
                 <div>
                   <el-button class="opt-button" style="margin-top: 0" @click="openResendList" size="small"
@@ -396,6 +406,24 @@
       </div>
 
       <!-- Dialogs remain the same -->
+      <el-dialog v-model="showMailRetention" :title="t('mailRetention')" width="min(420px, 92vw)"
+                 :close-on-click-modal="!settingLoading">
+        <p>{{ t('mailRetentionDescription') }}</p>
+        <el-form label-position="top">
+          <el-form-item :label="t('mailLimit')">
+            <el-input-number v-model="mailRetentionForm.mailLimit" :min="0" :precision="0"/>
+          </el-form-item>
+          <el-form-item :label="t('mailDeleteCount')">
+            <el-input-number v-model="mailRetentionForm.mailDeleteCount" :min="1" :max="1000" :precision="0"/>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button type="primary" :loading="settingLoading"
+                     :disabled="mailRetentionForm.mailLimit == null || mailRetentionForm.mailDeleteCount == null"
+                     @click="editSetting({...mailRetentionForm})">{{ t('save') }}</el-button>
+        </template>
+      </el-dialog>
+
       <el-dialog v-model="editTitleShow" :title="$t('changeTitle')" width="340" @closed="editTitle = setting.title">
         <form>
           <el-input type="text" :placeholder="$t('websiteTitle')" v-model="editTitle"/>
@@ -707,6 +735,14 @@ const uiStore = useUiStore();
 const {settings: setting} = storeToRefs(settingStore);
 const editTitle = ref('')
 const settingLoading = ref(false)
+const showMailRetention = ref(false)
+const mailRetentionForm = reactive({mailLimit: 0, mailDeleteCount: 100})
+
+function openMailRetention() {
+  mailRetentionForm.mailLimit = setting.value.mailLimit ?? 0
+  mailRetentionForm.mailDeleteCount = setting.value.mailDeleteCount ?? 100
+  showMailRetention.value = true
+}
 const clearS3Loading = ref(false)
 const r2DomainInput = ref('')
 const loginOpacity = ref(0)
@@ -1224,6 +1260,7 @@ function editSetting(settingForm, refreshStatus = true) {
     regVerifyCountShow.value = false
     noticePopupShow.value = false
     addS3Show.value = false
+    showMailRetention.value = false
   }).catch((e) => {
     loginOpacity.value = setting.value.loginOpacity
     setting.value = {...setting.value, ...JSON.parse(backup)}
