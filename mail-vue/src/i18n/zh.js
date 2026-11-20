@@ -3,7 +3,7 @@ const zh = {
     randomAddressMixed: '全随机',
     randomAddressLettersDigits: '随机字母 + 随机数字',
     randomAddressDigits: '纯数字',
-    randomAddressPartLength: '字母和数字各几位',
+    randomAddressLetterLength: '字母位数',
     randomAddressDigitLength: '数字位数',
     filterMail: '邮件筛选',
     mailFilterDateStart: '开始日期',

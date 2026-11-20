@@ -267,9 +267,15 @@
               <el-option :label="$t('randomAddressDigits')" value="digits"/>
             </el-select>
           </el-form-item>
-          <el-form-item v-if="addForm.randomMode === 'lettersDigits'" :label="$t('randomAddressPartLength')">
-            <el-input-number v-model="addForm.partLength" :min="1" :max="32" :precision="0"/>
-          </el-form-item>
+          <template v-if="addForm.randomMode === 'lettersDigits'">
+            <el-form-item :label="$t('randomAddressLetterLength')">
+              <el-input-number v-model="addForm.letterLength" :min="1" :max="63" :precision="0"/>
+            </el-form-item>
+            <el-form-item :label="$t('randomAddressDigitLength')">
+              <el-input-number v-model="addForm.mixedDigitLength" :min="1"
+                               :max="64 - (addForm.letterLength ?? 1)" :precision="0"/>
+            </el-form-item>
+          </template>
           <el-form-item v-if="addForm.randomMode === 'digits'" :label="$t('randomAddressDigitLength')">
             <el-input-number v-model="addForm.digitLength" :min="1" :max="64" :precision="0"/>
           </el-form-item>
@@ -421,7 +427,8 @@ const addForm = reactive({
   emailPrefix: '',
   quantity: 1,
   randomMode: 'mixed',
-  partLength: 4,
+  letterLength: 4,
+  mixedDigitLength: 4,
   digitLength: 8,
   password: '',
   type: null,
@@ -634,7 +641,8 @@ function resetAddForm() {
   addForm.emailPrefix = ''
   addForm.quantity = 1
   addForm.randomMode = 'mixed'
-  addForm.partLength = 4
+  addForm.letterLength = 4
+  addForm.mixedDigitLength = 4
   addForm.digitLength = 8
   addForm.type = null
   addForm.password = ''
@@ -749,8 +757,8 @@ async function submit() {
     userBatchAdd({
       quantity: addForm.quantity,
       randomMode: addForm.randomMode,
-      partLength: addForm.partLength,
-      digitLength: addForm.digitLength,
+      letterLength: addForm.letterLength,
+      digitLength: addForm.randomMode === 'lettersDigits' ? addForm.mixedDigitLength : addForm.digitLength,
       suffix: addForm.suffix,
       password: addForm.password,
       type: addForm.type

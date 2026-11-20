@@ -3,7 +3,7 @@ const en = {
     randomAddressMixed: 'Random letters and digits',
     randomAddressLettersDigits: 'Letters followed by digits',
     randomAddressDigits: 'Digits only',
-    randomAddressPartLength: 'Characters per part',
+    randomAddressLetterLength: 'Number of letters',
     randomAddressDigitLength: 'Number of digits',
     filterMail: 'Filter mail',
     mailFilterDateStart: 'Start date',

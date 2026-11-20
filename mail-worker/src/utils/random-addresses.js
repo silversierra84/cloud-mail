@@ -9,43 +9,50 @@ function randomCharacters(alphabet, length) {
 		value => alphabet[Math.floor(value / 2 ** 32 * alphabet.length)]).join('');
 }
 
-export function randomAddressCandidates({ quantity, randomMode, partLength, digitLength }) {
+export function randomAddressCandidates({ quantity, randomMode, letterLength, digitLength }) {
+	const mixed = randomMode === 'lettersDigits';
+	const numeric = mixed || randomMode === 'digits';
 	if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000 ||
 		!['mixed', 'lettersDigits', 'digits'].includes(randomMode) ||
-		(randomMode === 'lettersDigits' && (!Number.isInteger(partLength) || partLength < 1 || partLength > 32)) ||
-		(randomMode === 'digits' && (!Number.isInteger(digitLength) || digitLength < 1 || digitLength > 64))) {
+		(numeric && (!Number.isInteger(digitLength) || digitLength < 1 || digitLength > 64)) ||
+		(mixed && (!Number.isInteger(letterLength) || letterLength < 1 || letterLength + digitLength > 64))) {
 		throw new BizError(t('invalidRandomAddressOptions'));
 	}
 
-	const capacity = randomMode === 'lettersDigits' ? 260 ** partLength
-		: randomMode === 'digits' ? 10 ** digitLength : Infinity;
+	const capacity = mixed ? 26 ** letterLength * 10 ** digitLength
+		: numeric ? 10 ** digitLength : Infinity;
 	if (quantity > capacity) throw new BizError(t('randomAddressCapacity'));
 
 	if (capacity <= 10000) {
-		return shuffledPrefixes(capacity, randomMode, digitLength);
+		return shuffledPrefixes(capacity, mixed ? letterLength : 0, digitLength);
 	}
-	return sampledPrefixes(randomMode, partLength, digitLength, Math.max(quantity * 5, 100));
+	return sampledPrefixes(randomMode, letterLength, digitLength, Math.max(quantity * 5, 100));
 }
 
-function* shuffledPrefixes(capacity, mode, digitLength) {
+function* shuffledPrefixes(capacity, letterLength, digitLength) {
+	const digitCapacity = 10 ** digitLength;
 	const remaining = Array.from({ length: capacity }, (_, index) => index);
 	while (remaining.length) {
 		const index = Math.floor(Math.random() * remaining.length);
 		const value = remaining[index];
 		remaining[index] = remaining.at(-1);
 		remaining.pop();
-		yield mode === 'digits'
-			? String(value).padStart(digitLength, '0')
-			: letters[Math.floor(value / 10)] + digits[value % 10];
+		let letterIndex = Math.floor(value / digitCapacity);
+		let prefix = '';
+		for (let place = 0; place < letterLength; place++) {
+			prefix = letters[letterIndex % letters.length] + prefix;
+			letterIndex = Math.floor(letterIndex / letters.length);
+		}
+		yield prefix + String(value % digitCapacity).padStart(digitLength, '0');
 	}
 }
 
-function* sampledPrefixes(mode, partLength, digitLength, attempts) {
+function* sampledPrefixes(mode, letterLength, digitLength, attempts) {
 	const seen = new Set();
 	for (let attempt = 0; attempt < attempts; attempt++) {
 		let prefix;
 		if (mode === 'lettersDigits') {
-			prefix = randomCharacters(letters, partLength) + randomCharacters(digits, partLength);
+			prefix = randomCharacters(letters, letterLength) + randomCharacters(digits, digitLength);
 		} else if (mode === 'digits') {
 			prefix = randomCharacters(digits, digitLength);
 		} else {

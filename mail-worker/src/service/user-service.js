@@ -73,7 +73,7 @@ const userService = {
 		return userId;
 	},
 
-	async generateBatch(c, { quantity, randomMode, partLength, digitLength, suffix, password, type }) {
+	async generateBatch(c, { quantity, randomMode, letterLength, partLength, digitLength, suffix, password, type }) {
 		const setting = await settingService.query(c);
 		if (!setting.domainList.includes(suffix)) {
 			throw new BizError(t('notEmailDomain'));
@@ -81,7 +81,12 @@ const userService = {
 		if (typeof password !== 'string' || password.length < 6) {
 			throw new BizError(t('pwdMinLengthLimit'));
 		}
-		const candidates = randomAddressCandidates({ quantity, randomMode, partLength, digitLength });
+		const candidates = randomAddressCandidates({
+			quantity,
+			randomMode,
+			letterLength: letterLength === undefined ? partLength : letterLength,
+			digitLength: randomMode === 'lettersDigits' && letterLength === undefined ? partLength : digitLength
+		});
 		const addresses = [];
 
 		while (addresses.length < quantity) {
